@@ -4,16 +4,32 @@ import json
 import os
 import sys
 import threading
+import webbrowser
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, font
 from PIL import Image, ImageTk
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter, legal, A3, A4, A5, landscape
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.units import inch
 from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
-# --- HIGH DPI AWARENESS (Fixes scaling issues on high-res monitors) ---
+# local 'fonts' folder
+try:
+    if getattr(sys, 'frozen', False):
+        # PyInstaller extracts bundled data here
+        base_dir = sys._MEIPASS
+    else:
+        # Standard python script directory
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+    font_path = os.path.join(base_dir, "settings", "fonts", "Amarillo.ttf")
+    pdfmetrics.registerFont(TTFont('Amarillo', font_path))
+except Exception as e:
+    print(f"Could not load custom font: {e}")
+
 try:
     from ctypes import windll
 
@@ -23,7 +39,7 @@ except Exception:
 
 Image.MAX_IMAGE_PIXELS = None
 
-# --- DIRECTORY & PATH RESOLUTION ---
+
 if getattr(sys, 'frozen', False):
     EXE_DIR = os.path.dirname(os.path.abspath(sys.executable))
 else:
@@ -63,7 +79,7 @@ def get_next_map_tag(output_dir):
     if not found_any:
         return "1A"
 
-    # Advance letter A -> Z, then wrap to next number
+    # Advance letter A -> Z, then wrap to next num
     if max_let_idx < 25:
         next_num = max_num
         next_let_idx = max_let_idx + 1
@@ -94,20 +110,24 @@ def resource_path(relative_path):
 
 DEFAULT_SETTINGS = {
     "cols": 2,
-    "rows": 2,
-    "fit_mode": "crop",
-    "margin": 0.25,
-    "dpi": 300,
-    "overlap": 0.25,
+    "rows": 1,
+    "fit_mode": "stretch",
+    "margin": 0.10,
+    "dpi": 600,
+    "overlap": 0.75,
     "rotation": 0,
     "orientation": "portrait",
     "paper_size": "Letter",
     "custom_w": 8.5,
     "custom_h": 11.0,
     "letterbox_color": "Black",
-    "show_headers": True,
-    "show_guides": True,
-    "disable_smoothing": False,
+    "show_headers": False,
+    "font_name": "Amarillo",
+    "font_size": 3,
+    "font_color": "Black",
+    "header_offset": 0.037,
+    "show_guides": False,
+    "disable_smoothing": True,
     "sidebar_width": 220,
     "pan_x": 0.0,
     "pan_y": 0.0,
@@ -136,27 +156,111 @@ class ScrollableFrame(ttk.Frame):
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
 
+        # Global bindings for mouse wheel
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-4>", self._on_linux_scroll)
+        self.canvas.bind_all("<Button-5>", self._on_linux_scroll)
+
+        # Bind enter/leave on the entire widget area so it safely binds/unbinds 
+        # global mouse wheel events only when your mouse is actively over this frame.
+        self.bind("<Enter>", self._bind_mousewheel)
+        self.bind("<Leave>", self._unbind_mousewheel)
         self.scrollable_content.bind("<Enter>", self._bind_mousewheel)
-        self.scrollable_content.bind("<Leave>", self._unbind_mousewheel)
+        
 
     def _bind_mousewheel(self, event):
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-4>", self._on_linux_scroll)
+        self.canvas.bind_all("<Button-5>", self._on_linux_scroll)
 
     def _unbind_mousewheel(self, event):
         self.canvas.unbind_all("<MouseWheel>")
+        self.canvas.unbind_all("<Button-4>")
+        self.canvas.unbind_all("<Button-5>")
+
+    def _is_restricted_widget(self, widget):
+        """Check if the widget, its parents, or active popups are interactive/dropdown-related."""
+        try:
+            current = widget
+            while current:
+                class_name = current.winfo_class()
+                if class_name in (
+                    "Menu", 
+                    "ComboboxListbox", 
+                    "TCombobox", 
+                    "Spinbox", 
+                    "TSpinbox", 
+                    "Treeview", 
+                    "Listbox"
+                ):
+                    return True
+                current = current.master
+
+            # Check if it resides inside an open combobox popup/toplevel window
+            toplevel = widget.winfo_toplevel()
+            if toplevel:
+                toplevel_name = str(toplevel).lower()
+                if "popdown" in toplevel_name or "menu" in toplevel_name:
+                    return True
+        except Exception:
+            pass
+        return False
 
     def _on_mousewheel(self, event):
+        if self._is_restricted_widget(event.widget):
+            return
         self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
+    def _on_linux_scroll(self, event):
+        if self._is_restricted_widget(event.widget):
+            return
+        if event.num == 4:
+            self.canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            self.canvas.yview_scroll(1, "units")
+
+    def _is_dropdown(self, widget):
+        """Check if the widget or any of its parents is a dropdown menu or combobox list."""
+        try:
+            while widget:
+                class_name = widget.winfo_class()
+                if class_name in (
+                    "Menu", 
+                    "ComboboxListbox", 
+                    "TCombobox", 
+                    "Spinbox", 
+                    "TSpinbox", 
+                    "Treeview", 
+                    "Listbox"
+                ):
+                    return True
+                widget = widget.master
+        except Exception:
+            pass
+        return False
+
+    def _on_mousewheel(self, event):
+        if self._is_dropdown(event.widget):
+            return  # Stop scrolling if over a dropdown menu
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _on_linux_scroll(self, event):
+        if self._is_dropdown(event.widget):
+            return  # Stop scrolling if over a dropdown menu
+        if event.num == 4:
+            self.canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            self.canvas.yview_scroll(1, "units")
 
 class MapTilerApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Map Tile Generator v1.1               (By: Blahpr 2026)")
+        self.title("Map Tile Generator v1.7               (By: Blahpr 2026)")
         self.geometry("1100x750")
         self.minsize(900, 600)
 
         self._apply_global_icon()
+        self._build_menu_bar()
 
         # App State
         self.image_path = None
@@ -172,24 +276,27 @@ class MapTilerApp(tk.Tk):
 
         # Tkinter Variables
         self.cols_var = tk.IntVar(value=self.saved_defaults.get("cols", 2))
-        self.rows_var = tk.IntVar(value=self.saved_defaults.get("rows", 2))
-        self.fit_mode_var = tk.StringVar(value=self.saved_defaults.get("fit_mode", "crop"))
-        self.margin_var = tk.DoubleVar(value=self.saved_defaults.get("margin", 0.25))
-        self.dpi_var = tk.IntVar(value=self.saved_defaults.get("dpi", 300))
-        self.overlap_var = tk.DoubleVar(value=self.saved_defaults.get("overlap", 0.25))
+        self.rows_var = tk.IntVar(value=self.saved_defaults.get("rows", 1))
+        self.fit_mode_var = tk.StringVar(value=self.saved_defaults.get("fit_mode", "stretch"))
+        self.margin_var = tk.DoubleVar(value=self.saved_defaults.get("margin", 0.10))
+        self.dpi_var = tk.IntVar(value=self.saved_defaults.get("dpi", 600))
+        self.overlap_var = tk.DoubleVar(value=self.saved_defaults.get("overlap", 0.75))
         self.rotation_var = tk.IntVar(value=self.saved_defaults.get("rotation", 0))
         self.orientation_var = tk.StringVar(value=self.saved_defaults.get("orientation", "portrait"))
         self.paper_size_var = tk.StringVar(value=self.saved_defaults.get("paper_size", "Letter"))
         self.custom_w_var = tk.DoubleVar(value=self.saved_defaults.get("custom_w", 8.5))
         self.custom_h_var = tk.DoubleVar(value=self.saved_defaults.get("custom_h", 11.0))
         self.letterbox_color_var = tk.StringVar(value=self.saved_defaults.get("letterbox_color", "Black"))
-        self.show_headers_var = tk.BooleanVar(value=self.saved_defaults.get("show_headers", True))
-        self.show_guides_var = tk.BooleanVar(value=self.saved_defaults.get("show_guides", True))
-        self.disable_smoothing_var = tk.BooleanVar(value=self.saved_defaults.get("disable_smoothing", False))   
+        self.show_headers_var = tk.BooleanVar(value=self.saved_defaults.get("show_headers", False))
+        self.font_var = tk.StringVar(value=self.saved_defaults.get("font_name", "Amarillo"))
+        self.font_size_var = tk.IntVar(value=self.saved_defaults.get("font_size", 3))
+        self.font_color_var = tk.StringVar(value=self.saved_defaults.get("font_color", "Black"))
+        self.header_offset_var = tk.DoubleVar(value=self.saved_defaults.get("header_offset", 0.037))
+        self.show_guides_var = tk.BooleanVar(value=self.saved_defaults.get("show_guides", False))
+        self.disable_smoothing_var = tk.BooleanVar(value=self.saved_defaults.get("disable_smoothing", True))   
         self.pan_x_var = tk.DoubleVar(value=self.saved_defaults.get("pan_x", 0.0))
         self.pan_y_var = tk.DoubleVar(value=self.saved_defaults.get("pan_y", 0.0))
 
-        # Preview Zoom State
         self.zoom_level = 1.0
         self.pan_offset_x = 0.0
         self.pan_offset_y = 0.0
@@ -199,8 +306,8 @@ class MapTilerApp(tk.Tk):
         self._build_ui()
 
     def _apply_global_icon(self):
-        ico_path = resource_path(os.path.join("images", "p.ico"))
-        png_path = resource_path(os.path.join("images", "app_icon.png"))
+        ico_path = resource_path(os.path.join("images", "1.ico"))
+        png_path = resource_path(os.path.join("images", "2.png"))
 
         if os.path.exists(ico_path):
             try:
@@ -214,6 +321,39 @@ class MapTilerApp(tk.Tk):
                 self.iconphoto(True, photo)
             except Exception as e:
                 print(f"Could not load .png icon file: {e}")
+
+    def _build_menu_bar(self):
+        menubar = tk.Menu(self)
+        
+        about_menu = tk.Menu(menubar, tearoff=0)
+        about_menu.add_command(label="About", command=self.open_about_window)
+        menubar.add_cascade(label="Help", menu=about_menu)
+        
+        self.config(menu=menubar)
+
+    def open_about_window(self):
+        about_win = tk.Toplevel(self)
+        about_win.title("Info")
+        about_win.geometry("200x110")
+        about_win.resizable(True, True)
+
+        try:
+            ico_path = resource_path(os.path.join("images", "2.ico"))
+            if os.path.exists(ico_path):
+                about_win.iconbitmap(ico_path)
+        except Exception:
+            pass
+
+        p_x = self.winfo_x() + (self.winfo_width() // 2) - 100
+        p_y = self.winfo_y() + (self.winfo_height() // 2) - 45
+        about_win.geometry(f"+{p_x}+{p_y}")
+
+        ttk.Label(about_win, text="Map Tile Generator", font=("Helvetica", 11, "bold")).pack(pady=(15, 2))
+        ttk.Label(about_win, text="Version 1.7", font=("Helvetica", 9, "italic")).pack(pady=(0, 5))
+        
+        lbl_link = ttk.Label(about_win, text="https://github.com/BLAHPR", font=("Helvetica", 9, "underline"), foreground="blue", cursor="hand2")
+        lbl_link.pack(pady=(0, 10))
+        lbl_link.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/BLAHPR"))
 
     def load_settings_from_disk(self):
         if os.path.exists(SETTINGS_FILE):
@@ -242,29 +382,37 @@ class MapTilerApp(tk.Tk):
             "custom_h": self.custom_h_var.get(),
             "letterbox_color": self.letterbox_color_var.get(),
             "show_headers": self.show_headers_var.get(),
+            "font_name": self.font_var.get(),
+            "font_size": self.font_size_var.get(),
+            "font_color": self.font_color_var.get(),
+            "header_offset": self.header_offset_var.get(),
             "show_guides": self.show_guides_var.get(),
             "disable_smoothing": self.disable_smoothing_var.get(),
             "pan_x": self.pan_x_var.get(),
             "pan_y": self.pan_y_var.get(),
-            "sash_pos": self.main_paned.sashpos(0) if hasattr(self, "main_paned") else self.saved_defaults.get("sash_pos", 320)
+            "sash_pos": self.main_paned.sashpos(0) if hasattr(self, "main_paned") else self.saved_defaults.get("sash_pos", 302)
         }
 
     def apply_settings(self, settings_dict):
         self.cols_var.set(settings_dict.get("cols", 2))
-        self.rows_var.set(settings_dict.get("rows", 2))
-        self.fit_mode_var.set(settings_dict.get("fit_mode", "crop"))
-        self.margin_var.set(settings_dict.get("margin", 0.25))
-        self.dpi_var.set(settings_dict.get("dpi", 300))
-        self.overlap_var.set(settings_dict.get("overlap", 0.25))
+        self.rows_var.set(settings_dict.get("rows", 1))
+        self.fit_mode_var.set(settings_dict.get("fit_mode", "stretch"))
+        self.margin_var.set(settings_dict.get("margin", 0.10))
+        self.dpi_var.set(settings_dict.get("dpi", 600))
+        self.overlap_var.set(settings_dict.get("overlap", 0.75))
         self.rotation_var.set(settings_dict.get("rotation", 0))
         self.orientation_var.set(settings_dict.get("orientation", "portrait"))
         self.paper_size_var.set(settings_dict.get("paper_size", "Letter"))
         self.custom_w_var.set(settings_dict.get("custom_w", 8.5))
         self.custom_h_var.set(settings_dict.get("custom_h", 11.0))
         self.letterbox_color_var.set(settings_dict.get("letterbox_color", "Black"))
-        self.show_headers_var.set(settings_dict.get("show_headers", True))
-        self.show_guides_var.set(settings_dict.get("show_guides", True))
-        self.disable_smoothing_var.set(settings_dict.get("disable_smoothing", False))
+        self.show_headers_var.set(settings_dict.get("show_headers", False))
+        self.font_var.set(settings_dict.get("font_name", "Amarillo"))
+        self.font_size_var.set(settings_dict.get("font_size", 3))
+        self.font_color_var.set(settings_dict.get("font_color", "Black"))
+        self.header_offset_var.set(settings_dict.get("header_offset", 0.037))
+        self.show_guides_var.set(settings_dict.get("show_guides", False))
+        self.disable_smoothing_var.set(settings_dict.get("disable_smoothing", True))
         self.pan_x_var.set(settings_dict.get("pan_x", 0.0))
         self.pan_y_var.set(settings_dict.get("pan_y", 0.0))
         self.toggle_custom_inputs()
@@ -298,12 +446,12 @@ class MapTilerApp(tk.Tk):
         self.main_paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         self.main_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # --- LEFT CONTROL PANEL (Scrollable) ---
+        # --- LEFT CONTROL PANEL (Scrolable) ---
         ctrl_sidebar = ScrollableFrame(self.main_paned)
         self.main_paned.add(ctrl_sidebar, weight=0)
         ctrl_frame = ctrl_sidebar.scrollable_content
 
-        settings_box = ttk.LabelFrame(ctrl_frame, text=" Settings Management ", padding=6)
+        settings_box = ttk.LabelFrame(ctrl_frame, text=" Settings ", padding=6)
         settings_box.pack(fill=tk.X, pady=(0, 5))
         
         btn_set_def = ttk.Button(settings_box, text="Save as Startup Default", command=self.save_current_as_default)
@@ -315,7 +463,7 @@ class MapTilerApp(tk.Tk):
         file_box = ttk.LabelFrame(ctrl_frame, text=" 1. Source Image ", padding=10)
         file_box.pack(fill=tk.X, pady=(0, 10))
 
-        self.btn_browse = ttk.Button(file_box, text="Select Map Image...", command=self.browse_image)
+        self.btn_browse = ttk.Button(file_box, text="Select Image...", command=self.browse_image)
         self.btn_browse.pack(fill=tk.X)
         self.lbl_file = ttk.Label(file_box, text="No image selected", font=("Helvetica", 8, "italic"), wraplength=280)
         self.lbl_file.pack(anchor=tk.W, pady=(5, 0))
@@ -396,15 +544,15 @@ class MapTilerApp(tk.Tk):
         ttk.Button(row_2, text="5x3", width=4, command=lambda: self.set_grid(5, 3)).pack(side=tk.RIGHT, padx=1)
         ttk.Button(row_2, text="5x2", width=4, command=lambda: self.set_grid(5, 2)).pack(side=tk.RIGHT, padx=1)
 
-        ow_3 = ttk.Frame(preset_frame)
-        row_3.pack(fill=tk.X, pady=1)
+        row_6 = ttk.Frame(preset_frame)
+        row_6.pack(fill=tk.X, pady=1)
         ttk.Label(row_3, width=1).pack(side=tk.RIGHT)
         ttk.Button(row_3, text="6x4", width=4, command=lambda: self.set_grid(6, 4)).pack(side=tk.RIGHT, padx=1)
         ttk.Button(row_3, text="6x3", width=4, command=lambda: self.set_grid(6, 3)).pack(side=tk.RIGHT, padx=1)
         ttk.Button(row_3, text="6x2", width=4, command=lambda: self.set_grid(6, 2)).pack(side=tk.RIGHT, padx=1)
 
-        ow_4 = ttk.Frame(preset_frame)
-        row_4.pack(fill=tk.X, pady=1)
+        row_7 = ttk.Frame(preset_frame)
+        row_7.pack(fill=tk.X, pady=1)
         ttk.Label(row_4, width=1).pack(side=tk.RIGHT)
         ttk.Button(row_4, text="2x1", width=4, command=lambda: self.set_grid(2, 1)).pack(side=tk.RIGHT, padx=1)
         ttk.Button(row_4, text="1x2", width=4, command=lambda: self.set_grid(1, 2)).pack(side=tk.RIGHT, padx=1)
@@ -458,9 +606,32 @@ class MapTilerApp(tk.Tk):
 
         dpi_frame = ttk.Frame(print_box)
         dpi_frame.pack(fill=tk.X)
-        ttk.Label(dpi_frame, text="Target Quality:").pack(side=tk.LEFT)
-        ttk.Radiobutton(dpi_frame, text="300 DPI", value=300, variable=self.dpi_var).pack(side=tk.LEFT, padx=(10, 5))
-        ttk.Radiobutton(dpi_frame, text="600 DPI", value=600, variable=self.dpi_var).pack(side=tk.LEFT)
+        ttk.Label(dpi_frame, text="Quality:").pack(anchor=tk.W, pady=(0, 2))
+        
+        dpi_columns_frame = ttk.Frame(dpi_frame)
+        dpi_columns_frame.pack(fill=tk.X, padx=(10, 0), pady=2)
+        
+        dpi_left_col = ttk.Frame(dpi_columns_frame)
+        dpi_left_col.pack(side=tk.LEFT, anchor=tk.N)
+        
+        dpi_right_col = ttk.Frame(dpi_columns_frame)
+        dpi_right_col.pack(side=tk.LEFT, anchor=tk.N, padx=(30, 0))
+        
+        dpi_row1 = ttk.Frame(dpi_left_col)
+        dpi_row1.pack(fill=tk.X, pady=1)
+        ttk.Radiobutton(dpi_row1, text="300 DPI", value=300, variable=self.dpi_var).pack(side=tk.LEFT)
+        
+        dpi_row2 = ttk.Frame(dpi_left_col)
+        dpi_row2.pack(fill=tk.X, pady=1)
+        ttk.Radiobutton(dpi_row2, text="600 DPI", value=600, variable=self.dpi_var).pack(side=tk.LEFT)
+
+        dpi_row3 = ttk.Frame(dpi_right_col)
+        dpi_row3.pack(fill=tk.X, pady=1)
+        ttk.Radiobutton(dpi_row3, text="1200 DPI", value=1200, variable=self.dpi_var).pack(side=tk.LEFT)
+
+        dpi_row4 = ttk.Frame(dpi_right_col)
+        dpi_row4.pack(fill=tk.X, pady=1)
+        ttk.Radiobutton(dpi_row4, text="2400 DPI", value=2400, variable=self.dpi_var).pack(side=tk.LEFT)
 
         overlap_frame = ttk.Frame(print_box)
         overlap_frame.pack(fill=tk.X, pady=(6, 0))
@@ -476,8 +647,63 @@ class MapTilerApp(tk.Tk):
         ttk.Radiobutton(margin_frame, text="0.25\" Standard", value=0.25, variable=self.margin_var, command=self.update_preview).pack(side=tk.LEFT)
 
         ttk.Checkbutton(print_box, text="Show Sheet Headers / Labels", variable=self.show_headers_var).pack(anchor=tk.W, pady=(6, 0))
+
+        font_row1 = ttk.Frame(print_box)
+        font_row1.pack(fill=tk.X, padx=(2, 0), pady=(2, 2))
+        ttk.Label(font_row1, text="Font:").pack(side=tk.LEFT, padx=(0, 2))
+
+        font_cb = ttk.Combobox(
+            font_row1, 
+            textvariable=self.font_var, 
+            values=["Amarillo", "Helvetica-Bold", "Times-Bold", "Courier-Bold"], 
+            state="readonly", 
+            width=12
+        )
+        font_cb.pack(side=tk.LEFT, padx=(0, 5))
+
+        ttk.Label(font_row1, text="Size:").pack(side=tk.LEFT, padx=(0, 2))
+        size_cb = ttk.Combobox(
+            font_row1,
+            textvariable=self.font_size_var,
+            values=[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16],
+            state="readonly",
+            width=4
+        )
+        size_cb.pack(side=tk.LEFT, padx=(0, 5))
+
+        # --- Font Color Selection Row ---
+        font_row2 = ttk.Frame(print_box)
+        font_row2.pack(fill=tk.X, padx=(2, 0), pady=(2, 4))
+        
+        ttk.Label(font_row2, text="Color:").pack(side=tk.LEFT, padx=(0, 2))
+        color_cb = ttk.Combobox(
+            font_row2,
+            textvariable=self.font_color_var,
+            values=[
+                "Black", "White", "Gray", "Dark Gray", "Navy", "Blue", "Light Blue", 
+                "Cyan", "Red", "Dark Red", "Crimson", "Green", "Dark Green", "Lime", 
+                "Orange", "Gold", "Yellow", "Purple", "Magenta", "Brown", "Olive"
+            ],
+            state="readonly",
+            width=11
+        )
+        color_cb.pack(side=tk.LEFT, padx=(0, 5))
+
+        # --- Header Offset Spinbox ---
+        ttk.Label(font_row2, text="Y:").pack(side=tk.LEFT, padx=(0, 2))
+        offset_spin = ttk.Spinbox(
+            font_row2,
+            from_=0.000,
+            to=0.100,
+            increment=0.001,
+            format="%.3f",
+            textvariable=self.header_offset_var,
+            width=5
+        )
+        offset_spin.pack(side=tk.LEFT)
+        
         ttk.Checkbutton(print_box, text="Show Overlap Guides & Crop Lines", variable=self.show_guides_var, command=self.update_preview).pack(anchor=tk.W)
-        ttk.Checkbutton(print_box, text="Disable Smoothing (Preview & PDF)", variable=self.disable_smoothing_var, command=self.update_preview).pack(anchor=tk.W)
+        ttk.Checkbutton(print_box, text="Pixel Perfect \\ Blurr (Preview & PDF)", variable=self.disable_smoothing_var, command=self.update_preview).pack(anchor=tk.W)
 
         self.btn_generate = ttk.Button(ctrl_frame, text="Generate PDF", command=self.generate_pdf, state=tk.DISABLED)
         self.btn_generate.pack(fill=tk.X, pady=(10, 0), ipady=8)
@@ -490,7 +716,7 @@ class MapTilerApp(tk.Tk):
         zoom_bar.pack(fill=tk.X, pady=(0, 5))
 
         ttk.Label(zoom_bar, text="Zoom:").pack(side=tk.LEFT, padx=(0, 5))
-        self.zoom_lbl = ttk.Label(zoom_bar, text="100%", width=5)
+        self.zoom_lbl = ttk.Label(zoom_bar, text="100%", width=6)
         self.zoom_lbl.pack(side=tk.LEFT)
 
         ttk.Button(zoom_bar, text="Fit View", width=12, command=self.reset_view).pack(side=tk.RIGHT, padx=(5, 0))
@@ -515,7 +741,7 @@ class MapTilerApp(tk.Tk):
         self.canvas_preview.bind("<ButtonRelease-1>", self._on_drag_release)
 
         # Restore sash position after layout geometry settles
-        saved_sash = self.saved_defaults.get("sash_pos", 320)
+        saved_sash = self.saved_defaults.get("sash_pos", 302)
         self.after(100, lambda: self.main_paned.sashpos(0, saved_sash))
 
         # Save sash position on drag release
@@ -537,6 +763,32 @@ class MapTilerApp(tk.Tk):
             "Light Gray": (200, 200, 200)
         }
         return c_map.get(self.letterbox_color_var.get(), (0, 0, 0))
+
+    def get_reportlab_color(self, color_name):
+        color_map = {
+            "Black": colors.black,
+            "White": colors.white,
+            "Gray": colors.gray,
+            "Dark Gray": colors.darkgray,
+            "Navy": colors.navy,
+            "Blue": colors.blue,
+            "Light Blue": colors.lightblue,
+            "Cyan": colors.cyan,
+            "Red": colors.red,
+            "Dark Red": colors.darkred,
+            "Crimson": colors.crimson,
+            "Green": colors.green,
+            "Dark Green": colors.darkgreen,
+            "Lime": colors.lime,
+            "Orange": colors.orange,
+            "Gold": colors.gold,
+            "Yellow": colors.yellow,
+            "Purple": colors.purple,
+            "Magenta": colors.magenta,
+            "Brown": colors.brown,
+            "Olive": colors.olive
+        }
+        return color_map.get(color_name, colors.black)
 
     def set_alignment(self, x_val, y_val):
         if x_val is not None:
@@ -883,6 +1135,10 @@ class MapTilerApp(tk.Tk):
         base_name = os.path.splitext(os.path.basename(self.image_path))[0]
         mode_str = self.fit_mode_var.get()
         orient_str = self.orientation_var.get()
+        chosen_font = self.font_var.get()
+        chosen_size = self.font_size_var.get()
+        chosen_color = self.get_reportlab_color(self.font_color_var.get())
+        chosen_offset = self.header_offset_var.get()
 
         # Fetch the next sequential tag (e.g., 1A, 1B ... 1Z -> 2A)
         tag = get_next_map_tag(OUTPUT_DIR)
@@ -895,12 +1151,12 @@ class MapTilerApp(tk.Tk):
         progress_win = tk.Toplevel(self)
         progress_win.title("Generating PDF...")
         progress_win.geometry("420x150")
-        progress_win.resizable(False, False)
-        progress_win.transient(self)
-        progress_win.grab_set()
+        progress_win.resizable(False, True)
+        progress_win.attributes("-toolwindow", False)
+        # grab_set removed to keep minimize/maximize interactive
 
         try:
-            icon_path = os.path.join(os.path.dirname(__file__), "images", "p.ico")
+            icon_path = os.path.join(os.path.dirname(__file__), "images", "2.ico")
             progress_win.iconbitmap(icon_path)
         except Exception:
             pass
@@ -991,10 +1247,10 @@ class MapTilerApp(tk.Tk):
                     processed += 1
                     
                     self.after(0, lambda p=processed, r_num=r+1, c_num=col+1: (
-                        pbar.config(value=p),
-                        lbl_status.config(text=f"Rendering Tile [{c_num},{r_num}] at {dpi} DPI..."),
-                        lbl_count.config(text=f"{p} / {total_tiles} pages rendered")
-                    ))
+                    pbar.config(value=p),
+                    lbl_status.config(text=f"Generating [{c_num},{r_num}] at {dpi} DPI..."),
+                    lbl_count.config(text=f"{p} / {total_tiles} pages rendered")
+                ))
 
                     x0 = round(col * dims["step_w"] * dpi)
                     y0 = round(r * dims["step_h"] * dpi)
@@ -1013,7 +1269,6 @@ class MapTilerApp(tk.Tk):
                     # Pass interpolate parameter to enable or disable smoothing in PDF viewers
                     smooth_pdf = not self.disable_smoothing_var.get()
                     
-                    # 2. Draw directly without the unsupported 'interpolate' keyword
                     c.drawImage(
                         ImageReader(tmp), 
                         tile_x, 
@@ -1033,9 +1288,9 @@ class MapTilerApp(tk.Tk):
                             c.line(cx, cy - 0.1 * inch, cx, cy + 0.1 * inch)
 
                     if self.show_headers_var.get():
-                        c.setFont("Helvetica", 7)
-                        c.setFillColor(colors.gray)
-                        c.drawString(margin * inch, (page_h - margin + 0.05) * inch, f"{base_name} — Tile [{col+1},{r+1}] (Row {r+1}, Col {col+1} of {rows}x{cols})")
+                        c.setFont(chosen_font, chosen_size)
+                        c.setFillColor(chosen_color)
+                        c.drawString(margin * inch, (page_h - margin + chosen_offset) * inch, f"{base_name}       —     Tile {col+1} of {r+1}       —     Row {r+1} of {rows}       —     Col {col+1} of {cols}")
 
                     c.showPage()
                     if os.path.exists(tmp):
@@ -1045,7 +1300,7 @@ class MapTilerApp(tk.Tk):
 
             self.after(0, lambda: (
                 progress_win.destroy(),
-                messagebox.showinfo("Success", f"PDF Generated Successfully!\n\nSaved to output folder:\n{out_path}")
+                messagebox.showinfo("Success", f"PDF Generated Successfully!\n\n Saved to output folder:\n {out_path}")
             ))
 
         threading.Thread(target=worker, daemon=True).start()
