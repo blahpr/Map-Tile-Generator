@@ -1,0 +1,27 @@
+~~ Map Tile Generator (By Blahpr 2026) ~~
+
+Pro Assembly Steps for Printed Maps
+
+1.  Printer Settings (Crucial):
+        Set Scale to 100% / Actual Size (do not select "Fit to Printable Area", or it ruins the 0.01" or 0.25" overlap math).
+        Choose Best/High Quality photo print mode to handle the high dot density.
+
+2.  Paper Choice:
+       24lb–28lb Premium Matte Inkjet Paper: Beats standard 20lb printer paper without leaking glue or buckling. It also holds sharp                                     
+       gridlines and tiny text far better.       
+
+       Double-sided Matte Photo Paper: Best if you want the crispness and weight of an authentic folded travel map.
+
+3.  Trimming & Seaming:
+        Left-to-Right Overlap: Use a steel ruler and craft knife (X-Acto) to slice off the white margin on the Top and Right tiles using the                  
+        printed crosshairs. 
+
+        Glue: Use a repositionable glue stick or thin double-sided acid-free tape (0.25" wide) on the overlap tabs. Avoid standard PVA                      
+        liquids, as water causes paper to warp at the seams. 
+
+4.  Folding:
+        Once glued, use a bone folder or the edge of a plastic ruler to score line creases into accordion folds so it folds down cleanly into   
+        a pocket-sized map. 
+
+
+To get a seamless, professional print-and-assemble map on standard printer paper or photo paper, there are three critical mechanical details you need to handle:Alignment & Trim Marks: Without guidelines, cutting off the unprintable white margins of your printer leaves you guessing where to align the overlap.Margin Compensation: Desktop printers cannot print to the absolute edge of standard $8.5" \times 11"$ paper (unless using borderless photo modes). Adding clear cutlines prevents white borders from ruining the map seam.Glue/Tape Margins: The $0.25"$ overlap needs to be clearly marked so you know which page sits on top of which.Here is the enhanced script. It generates a 4-page 600 DPI PDF, but now adds fine alignment crosshairs and dashed cut/glue guidelines in the page margins.Python

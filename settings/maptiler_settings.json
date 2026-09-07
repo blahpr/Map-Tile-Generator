@@ -1,0 +1,20 @@
+{
+    "cols": 2,
+    "rows": 2,
+    "fit_mode": "stretch",
+    "margin": 0.1,
+    "dpi": 300,
+    "overlap": 0.25,
+    "rotation": 0,
+    "orientation": "portrait",
+    "paper_size": "Letter",
+    "custom_w": 8.5,
+    "custom_h": 11.0,
+    "letterbox_color": "Black",
+    "show_headers": false,
+    "show_guides": false,
+    "disable_smoothing": true,
+    "pan_x": 0.0,
+    "pan_y": 0.0,
+    "sash_pos": 303
+}
