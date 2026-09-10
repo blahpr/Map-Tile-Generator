@@ -37,5 +37,5 @@ https://github.com/user-attachments/assets/0395bba1-e69e-4e83-aa02-7ba6b802571f
 </details>
 
 ### Anyone Can Make Changes As They See Fit. Like Change Stuff, Add Stuff, Dislike Stuff You Can Please Feel Free.
-* (https://github.com/blahpr/Map-Tile-Generator)
+* (https://github.com/blahpr/Map-Tile-Generator/releases)
 * Using UPX The Ultimate Packer for eXecutables (https://github.com/upx/upx)
